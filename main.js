@@ -1,47 +1,49 @@
 const { Client, Events, Collection, GatewayIntentBits } = require('discord.js');
 const { token } = require('./config.json');
+const { SlashCommandBuilder } = require('discord.js');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
-client.once(Events.ClientReady, readyClient => {
-    console.log('Ready on Bot');
-});
+client.commands = new Collection();
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-client.commands = new Collection();
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-const foldersPath = path.join(__dirname,'src', 'commands');
-
-if (!fs.existsSync(foldersPath)) {
-    console.error(`El directorio 'src/commands' no existe en la ruta: ${foldersPath}`);
-    process.exit(1); 
+for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+    client.commands.set(command.data.name, command);
 }
 
-const commandFolders = fs.readdirSync(foldersPath);
+const eventsPath = path.join(__dirname, 'events');
+const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
 
-for (const folder of commandFolders) {
-    const folderPath = path.join(foldersPath, folder);
-    
-    if (fs.lstatSync(folderPath).isDirectory()) {
-        const commandFiles = fs.readdirSync(folderPath).filter(file => file.endsWith('.js'));
-
-        for (const file of commandFiles) {
-            const filePath = path.join(folderPath, file);
-            const command = require(filePath);
-
-            if ('data' in command && 'execute' in command) {
-                client.commands.set(command.data.name, command);
-            } else {
-                console.log(`[WARNING] El comando en ${filePath} no tiene las propiedades "data" o "execute".`);
-            }
-            console.log(`Se cargo correctamente ${filePath}`);
-        }
+for (const file of eventFiles) {
+    const filePath = path.join(eventsPath, file);
+    const event = require(filePath);
+    if (event.once) {
+        client.once(event.name, (...args) => event.execute(...args, client));
     } else {
-        console.log(`[WARNING] Se esperaba una carpeta, pero se encontró un archivo: ${folderPath}`);
+        client.on(event.name, (...args) => event.execute(...args, client));
     }
 }
 
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) return;
+
+    try {
+        await command.execute(interaction);
+    } catch (error) {
+        console.error(error);
+        await interaction.reply('Hubo un error al ejecutar ese comando.');
+    }
+});
 
 client.login(token);
